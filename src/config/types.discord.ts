@@ -65,6 +65,11 @@ export type DiscordGuildChannelConfig = {
   autoArchiveDuration?: "60" | "1440" | "4320" | "10080" | 60 | 1440 | 4320 | 10080;
   /** Naming strategy for auto-created threads. "message" uses message text; "generated" renames with an LLM title. */
   autoThreadName?: "message" | "generated";
+    /**
+   * If true, treat every inbound message as an image prompt and generate directly
+   * via the configured imageGenerationModel — no LLM turn is invoked.
+   */
+  directImageGen?: boolean;
 };
 
 export type DiscordReactionNotificationMode = "off" | "own" | "all" | "allowlist";

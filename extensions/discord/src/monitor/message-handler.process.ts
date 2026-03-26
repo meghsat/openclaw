@@ -40,7 +40,9 @@ import { resolveDiscordMaxLinesPerMessage } from "../accounts.js";
 import { chunkDiscordTextWithMode } from "../chunk.js";
 import { resolveDiscordDraftStreamingChunking } from "../draft-chunking.js";
 import { createDiscordDraftStream } from "../draft-stream.js";
-import { reactMessageDiscord, removeReactionDiscord } from "../send.js";
+import { generateImage } from "openclaw/plugin-sdk/image-generation-runtime";
+import { saveMediaBuffer } from "openclaw/plugin-sdk/media-runtime";
+import { reactMessageDiscord, removeReactionDiscord, sendMessageDiscord } from "../send.js";
 import { editMessageDiscord } from "../send.messages.js";
 import { normalizeDiscordSlug } from "./allow-list.js";
 import { resolveTimestampMs } from "./format.js";
@@ -206,6 +208,51 @@ export async function processDiscordMessage(
   });
   if (statusReactionsEnabled) {
     void statusReactions.setQueued();
+  }
+  // Direct image generation: bypass LLM and pass message text straight to the image model.
+  if (channelConfig?.directImageGen) {
+    try {
+      if (statusReactionsEnabled) {
+        await statusReactions.setThinking();
+      }
+      const result = await generateImage({ cfg, prompt: text });
+      const savedImages = await Promise.all(
+        result.images.map((image, index) =>
+          saveMediaBuffer(
+            image.buffer,
+            image.mimeType,
+            "tool-image-generation",
+            undefined,
+            image.fileName ?? `image-${index + 1}.png`,
+          ),
+        ),
+      );
+      for (const saved of savedImages) {
+        await sendMessageDiscord(`channel:${messageChannelId}`, "", {
+          cfg,
+          token,
+          rest: discordRest,
+          accountId,
+          mediaUrl: saved.path,
+          mediaLocalRoots,
+          replyTo: message.id,
+        });
+      }
+      if (statusReactionsEnabled) {
+        await statusReactions.setDone();
+        if (removeAckAfterReply) {
+          void statusReactions.clear();
+        } else {
+          void statusReactions.restoreInitial();
+        }
+      }
+    } catch (err) {
+      runtime.error?.(danger(`discord direct image gen failed: ${String(err)}`));
+      if (statusReactionsEnabled) {
+        await statusReactions.setError();
+      }
+    }
+    return;
   }
 
   const fromLabel = isDirectMessage

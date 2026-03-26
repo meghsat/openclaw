@@ -345,6 +345,10 @@
       "types": "./dist/plugin-sdk/image-generation-core.d.ts",
       "default": "./dist/plugin-sdk/image-generation-core.js"
     },
+    "./plugin-sdk/image-generation-runtime": {
+      "types": "./dist/plugin-sdk/image-generation-runtime.d.ts",
+      "default": "./dist/plugin-sdk/image-generation-runtime.js"
+    },
     "./plugin-sdk/imessage": {
       "types": "./dist/plugin-sdk/imessage.d.ts",
       "default": "./dist/plugin-sdk/imessage.js"
@@ -750,7 +754,6 @@
     "test:perf:profile:runner": "node scripts/run-vitest-profile.mjs runner",
     "test:perf:update-memory-hotspots": "node scripts/test-update-memory-hotspots.mjs",
     "test:perf:update-timings": "node scripts/test-update-timings.mjs",
-    "test:perf:update-timings:extensions": "node scripts/test-update-timings.mjs --config vitest.extensions.config.ts",
     "test:sectriage": "pnpm exec vitest run --config vitest.gateway.config.ts && vitest run --config vitest.unit.config.ts --exclude src/daemon/launchd.integration.test.ts --exclude src/process/exec.test.ts",
     "test:serial": "node scripts/test-parallel.mjs --profile serial",
     "test:startup:memory": "node scripts/check-cli-startup-memory.mjs",
