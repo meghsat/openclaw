@@ -413,6 +413,7 @@ export const DiscordGuildChannelSchema = z
     users: DiscordIdListSchema.optional(),
     roles: DiscordIdListSchema.optional(),
     systemPrompt: z.string().optional(),
+    preRunScript: z.string().optional(),
     includeThreadStarter: z.boolean().optional(),
     autoThread: z.boolean().optional(),
     directImageGen: z.boolean().optional(),

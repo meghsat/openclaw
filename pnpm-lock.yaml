@@ -402,6 +402,8 @@ importers:
 
   extensions/kimi-coding: {}
 
+  extensions/lemonade: {}
+
   extensions/line:
     devDependencies:
       openclaw:

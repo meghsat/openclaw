@@ -1,7 +1,7 @@
 import { LEMONADE_DEFAULT_BASE_URL } from "openclaw/plugin-sdk/agent-runtime";
 import type { ImageGenerationProvider } from "openclaw/plugin-sdk/image-generation";
 
-const LEMONADE_IMAGE_MODEL = "SDXL-Turbo";
+const LEMONADE_IMAGE_MODEL = "Flux-2-Klein-4B";
 
 type LemonadeImageResponse = {
   data?: { b64_json?: string }[];

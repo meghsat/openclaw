@@ -149,6 +149,20 @@ export async function runDiscordGatewayLifecycle(params: {
     if (!gateway) {
       return;
     }
+    // Carbon reconnects from the socket close handler even for intentional
+    // disconnects. Strip close/error listeners before calling disconnect so
+    // the socket closing during shutdown does not trigger a reconnect attempt
+    // with maxAttempts: 0, which would throw an uncaught exception.
+    const mutableGateway = gateway as MutableGateway;
+    const socket = mutableGateway.ws;
+    if (socket) {
+      for (const listener of socket.listeners("close")) {
+        socket.removeListener("close", listener);
+      }
+      for (const listener of socket.listeners("error")) {
+        socket.removeListener("error", listener);
+      }
+    }
     gateway.options.reconnect = { maxAttempts: 0 };
     gateway.disconnect();
   };

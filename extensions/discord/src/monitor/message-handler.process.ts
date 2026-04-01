@@ -1,3 +1,5 @@
+import { exec } from "node:child_process";
+import { promisify } from "node:util";
 import { ChannelType, type RequestClient } from "@buape/carbon";
 import { resolveAckReaction, resolveHumanDelayConfig } from "openclaw/plugin-sdk/agent-runtime";
 import { EmbeddedBlockChunker } from "openclaw/plugin-sdk/agent-runtime";
@@ -58,6 +60,8 @@ import { buildDirectLabel, buildGuildLabel, resolveReplyContext } from "./reply-
 import { deliverDiscordReply } from "./reply-delivery.js";
 import { resolveDiscordAutoThreadReplyPlan, resolveDiscordThreadStarter } from "./threading.js";
 import { sendTyping } from "./typing.js";
+
+const execAsync = promisify(exec);
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -289,6 +293,25 @@ export async function processDiscordMessage(
     channelTopic: channelInfo?.topic,
     messageBody: text,
   });
+  let dynamicGroupSystemPrompt = groupSystemPrompt;
+  if (channelConfig?.preRunScript?.trim() && isGuildMessage) {
+    try {
+      const { stdout } = await execAsync(channelConfig.preRunScript, {
+        timeout: 60_000,
+        maxBuffer: 100 * 1024,
+      });
+      const scriptOutput = stdout.trim();
+      if (scriptOutput) {
+        dynamicGroupSystemPrompt = [groupSystemPrompt, scriptOutput]
+          .filter(Boolean)
+          .join("\n\n");
+      }
+    } catch (err) {
+      logVerbose(
+        `discord: preRunScript failed for channel ${messageChannelId}: ${String(err)}`,
+      );
+    }
+  }
   const storePath = resolveStorePath(cfg.session?.store, {
     agentId: route.agentId,
   });
@@ -430,7 +453,7 @@ export async function processDiscordMessage(
     GroupSubject: groupSubject,
     GroupChannel: groupChannel,
     UntrustedContext: untrustedContext,
-    GroupSystemPrompt: isGuildMessage ? groupSystemPrompt : undefined,
+    GroupSystemPrompt: isGuildMessage ? dynamicGroupSystemPrompt : undefined,
     GroupSpace: isGuildMessage ? (guildInfo?.id ?? guildSlug) || undefined : undefined,
     OwnerAllowFrom: ownerAllowFrom,
     Provider: "discord" as const,

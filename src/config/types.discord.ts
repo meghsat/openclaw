@@ -57,6 +57,8 @@ export type DiscordGuildChannelConfig = {
   roles?: string[];
   /** Optional system prompt snippet for this channel. */
   systemPrompt?: string;
+  /** Optional shell command to run before each inbound message; stdout is appended to the system prompt. */
+  preRunScript?: string;
   /** If false, omit thread starter context for this channel (default: true). */
   includeThreadStarter?: boolean;
   /** If true, automatically create a thread for each new message in this channel. */

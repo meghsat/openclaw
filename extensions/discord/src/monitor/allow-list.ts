@@ -27,6 +27,7 @@ type DiscordChannelOverrideConfig = {
   users?: string[];
   roles?: string[];
   systemPrompt?: string;
+  preRunScript?: string;
   includeThreadStarter?: boolean;
   autoThread?: boolean;
   autoThreadName?: "message" | "generated";
@@ -403,6 +404,7 @@ function resolveDiscordChannelConfigEntry(
     users: entry.users,
     roles: entry.roles,
     systemPrompt: entry.systemPrompt,
+    preRunScript: entry.preRunScript,
     includeThreadStarter: entry.includeThreadStarter,
     autoThread: entry.autoThread,
     autoThreadName: entry.autoThreadName,
