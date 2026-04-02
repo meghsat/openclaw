@@ -1430,6 +1430,44 @@ export const GENERATED_BUNDLED_PLUGIN_METADATA = [
     },
   },
   {
+  dirName: "lemonade",
+  idHint: "lemonade",
+  source: {
+    source: "./index.ts",
+    built: "index.js",
+  },
+  packageName: "@openclaw/lemonade-provider",
+  packageVersion: "2026.3.22",
+  packageDescription: "OpenClaw Lemonade Server provider plugin",
+  packageManifest: {
+    extensions: ["./index.ts"],
+  },
+  manifest: {
+    id: "lemonade",
+    configSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {},
+    },
+    providers: ["lemonade"],
+    providerAuthEnvVars: {
+      lemonade: ["LEMONADE_API_KEY"],
+    },
+    providerAuthChoices: [
+      {
+        provider: "lemonade",
+        method: "custom",
+        choiceId: "lemonade",
+        choiceLabel: "Lemonade",
+        choiceHint: "Local AI server with GPU/NPU acceleration (OpenAI-compatible)",
+        groupId: "lemonade",
+        groupLabel: "Lemonade",
+        groupHint: "Local AI server with GPU/NPU acceleration",
+      },
+    ],
+  },
+  },
+  {
     dirName: "line",
     idHint: "line",
     source: {
