@@ -10,6 +10,7 @@ import {
   type ProviderAuthMethodNonInteractiveContext,
   type ProviderDiscoveryContext,
 } from "openclaw/plugin-sdk/plugin-entry";
+import { normalizeSecretInputString } from "openclaw/plugin-sdk/secret-input";
 import { buildLemonadeImageGenerationProvider } from "./image-generation-provider.js";
 
 const PROVIDER_ID = "lemonade";
@@ -65,7 +66,7 @@ export default definePluginEntry({
         run: async (ctx: ProviderDiscoveryContext) => {
           const explicit = ctx.config.models?.providers?.lemonade;
           const hasExplicitModels = Array.isArray(explicit?.models) && explicit.models.length > 0;
-          const lemonadeKey = ctx.resolveProviderApiKey(PROVIDER_ID).apiKey;
+          const { apiKey: lemonadeKey, discoveryApiKey } = ctx.resolveProviderApiKey(PROVIDER_ID);
 
           if (hasExplicitModels && explicit) {
             return {
@@ -81,9 +82,11 @@ export default definePluginEntry({
             };
           }
 
+          const explicitApiKey = normalizeSecretInputString(explicit?.apiKey);
           const providerSetup = await loadProviderSetup();
           const provider = await providerSetup.buildLemonadeProvider({
             baseUrl: explicit?.baseUrl,
+            apiKey: discoveryApiKey ?? explicitApiKey,
           });
           if (provider.models.length === 0 && !lemonadeKey && !explicit) {
             return null;
@@ -91,7 +94,7 @@ export default definePluginEntry({
           return {
             provider: {
               ...provider,
-              apiKey: lemonadeKey ?? explicit?.apiKey ?? DEFAULT_API_KEY,
+              apiKey: lemonadeKey ?? explicitApiKey ?? DEFAULT_API_KEY,
             },
           };
         },
