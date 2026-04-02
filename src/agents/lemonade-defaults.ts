@@ -1,0 +1,4 @@
+export const LEMONADE_DEFAULT_BASE_URL = "http://127.0.0.1:8000/api/v1";
+export const LEMONADE_PROVIDER_LABEL = "Lemonade";
+export const LEMONADE_DEFAULT_API_KEY_ENV_VAR = "LEMONADE_API_KEY";
+export const LEMONADE_MODEL_PLACEHOLDER = "Qwen3-0.6B-GGUF";
