@@ -116,6 +116,7 @@ export {
   DOUBAO_MODEL_CATALOG,
   buildDoubaoModelDefinition,
 } from "../agents/doubao-models.js";
+export { LEMONADE_DEFAULT_BASE_URL } from "../agents/lemonade-defaults.js";
 export { OLLAMA_DEFAULT_BASE_URL } from "../agents/ollama-defaults.js";
 export { VLLM_DEFAULT_BASE_URL } from "../agents/vllm-defaults.js";
 export { SGLANG_DEFAULT_BASE_URL } from "../agents/sglang-defaults.js";
