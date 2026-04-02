@@ -1,6 +1,7 @@
 import type { OpenClawConfig } from "../config/config.js";
 import type { ModelDefinitionConfig } from "../config/types.models.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import { LEMONADE_DEFAULT_BASE_URL, LEMONADE_PROVIDER_LABEL } from "./lemonade-defaults.js";
 import {
   enrichOllamaModelsWithContext,
   OLLAMA_DEFAULT_CONTEXT_WINDOW,
@@ -179,6 +180,22 @@ export async function buildSglangProvider(params?: {
     baseUrl,
     apiKey: params?.apiKey,
     label: SGLANG_PROVIDER_LABEL,
+  });
+  return {
+    baseUrl,
+    api: "openai-completions",
+    models,
+  };
+}
+export async function buildLemonadeProvider(params?: {
+  baseUrl?: string;
+  apiKey?: string;
+}): Promise<ProviderConfig> {
+  const baseUrl = (params?.baseUrl?.trim() || LEMONADE_DEFAULT_BASE_URL).replace(/\/+$/, "");
+  const models = await discoverOpenAICompatibleLocalModels({
+    baseUrl,
+    apiKey: params?.apiKey,
+    label: LEMONADE_PROVIDER_LABEL,
   });
   return {
     baseUrl,
