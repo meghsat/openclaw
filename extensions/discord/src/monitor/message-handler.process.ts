@@ -297,8 +297,13 @@ export async function processDiscordMessage(
   if (channelConfig?.preRunScript?.trim() && isGuildMessage) {
     try {
       const { stdout } = await execAsync(channelConfig.preRunScript, {
-        timeout: 60_000,
+        timeout: 180_000,
         maxBuffer: 100 * 1024,
+        env: {
+          ...process.env,
+          OPENCLAW_USER_MESSAGE: text,
+          OPENCLAW_CHANNEL_ID: messageChannelId,
+        },
       });
       const scriptOutput = stdout.trim();
       if (scriptOutput) {
