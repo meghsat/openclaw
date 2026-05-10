@@ -49,6 +49,52 @@ describe("ssrf pinning", () => {
     );
   });
 
+  it("keeps automatic pinned lookups on IPv4 when both address families are available", async () => {
+    const lookup = createPinnedLookup({
+      hostname: "api.anthropic.com",
+      addresses: ["160.79.104.10", "2607:6bc0::10"],
+    });
+    const lookupDefault = () =>
+      new Promise<{ address: string; family?: number }>((resolve, reject) => {
+        lookup("api.anthropic.com", (err, address, family) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve({ address: address, family });
+          }
+        });
+      });
+    const lookupWithOptions = (options: { family?: number }) =>
+      new Promise<{ address: string; family?: number }>((resolve, reject) => {
+        lookup("api.anthropic.com", options, (err, address, family) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve({ address: address, family });
+          }
+        });
+      });
+
+    await expect(lookupDefault()).resolves.toEqual({ address: "160.79.104.10", family: 4 });
+    await expect(lookupDefault()).resolves.toEqual({ address: "160.79.104.10", family: 4 });
+
+    const all = await new Promise<unknown>((resolve, reject) => {
+      lookup("api.anthropic.com", { all: true }, (err, addresses) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(addresses);
+        }
+      });
+    });
+    expect(all).toEqual([{ address: "160.79.104.10", family: 4 }]);
+
+    await expect(lookupWithOptions({ family: 6 })).resolves.toEqual({
+      address: "2607:6bc0::10",
+      family: 6,
+    });
+  });
+
   it.each([
     { name: "RFC1918 private address", address: "10.0.0.8" },
     { name: "RFC2544 benchmarking range", address: "198.18.0.1" },
@@ -166,9 +212,9 @@ describe("ssrf pinning", () => {
 
   it("sorts IPv4 addresses before IPv6 in pinned results", async () => {
     const lookup = vi.fn(async () => [
-      { address: "2001:db8::1", family: 6 },
+      { address: "2606:4700:4700::1111", family: 6 },
       { address: "93.184.216.34", family: 4 },
-      { address: "2001:db8::2", family: 6 },
+      { address: "2606:4700:4700::1001", family: 6 },
       { address: "93.184.216.35", family: 4 },
     ]) as unknown as LookupFn;
 
@@ -176,8 +222,8 @@ describe("ssrf pinning", () => {
     expect(pinned.addresses).toEqual([
       "93.184.216.34",
       "93.184.216.35",
-      "2001:db8::1",
-      "2001:db8::2",
+      "2606:4700:4700::1111",
+      "2606:4700:4700::1001",
     ]);
   });
 

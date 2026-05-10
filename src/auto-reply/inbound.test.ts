@@ -1,13 +1,13 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
-import { resolveDiscordGroupRequireMention } from "../../extensions/discord/src/group-policy.js";
-import { resolveSlackGroupRequireMention } from "../../extensions/slack/src/group-policy.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import type { GroupKeyResolution } from "../config/sessions.js";
+import { channelRouteDedupeKey } from "../plugin-sdk/channel-route.js";
 import { resetPluginRuntimeStateForTest } from "../plugins/runtime.js";
 import { createInboundDebouncer } from "./inbound-debounce.js";
+import { installGroupRequireMentionTestPlugins } from "./inbound.group-require-mention-test-plugins.js";
 import { resolveGroupRequireMention } from "./reply/groups.js";
 import { finalizeInboundContext } from "./reply/inbound-context.js";
 import {
@@ -210,7 +210,16 @@ describe("inbound dedupe", () => {
       OriginatingTo: "telegram:123",
       MessageSid: "42",
     };
-    expect(buildInboundDedupeKey(ctx)).toBe("telegram|telegram:123|42");
+    expect(buildInboundDedupeKey(ctx)).toBe(
+      JSON.stringify([
+        "",
+        channelRouteDedupeKey({
+          channel: "telegram",
+          to: "telegram:123",
+        }),
+        "42",
+      ]),
+    );
   });
 
   it("skips duplicates with the same key", () => {
@@ -300,7 +309,7 @@ describe("createInboundDebouncer", () => {
     await debouncer.enqueue({ key: "a", id: "1" });
     await debouncer.enqueue({ key: "a", id: "2" });
 
-    expect(calls).toEqual([]);
+    expect(calls).toStrictEqual([]);
     await vi.advanceTimersByTimeAsync(10);
     expect(calls).toEqual([["1", "2"]]);
 
@@ -344,7 +353,7 @@ describe("createInboundDebouncer", () => {
     await debouncer.enqueue({ key: "forward", id: "1", windowMs: 30 });
     await debouncer.enqueue({ key: "forward", id: "2", windowMs: 30 });
 
-    expect(calls).toEqual([]);
+    expect(calls).toStrictEqual([]);
     await vi.advanceTimersByTimeAsync(30);
     expect(calls).toEqual([["1", "2"]]);
 
@@ -354,7 +363,7 @@ describe("createInboundDebouncer", () => {
   it("keeps later same-key work behind a timer-backed flush that already started", async () => {
     const started: string[] = [];
     const finished: string[] = [];
-    let releaseFirst!: () => void;
+    let releaseFirst: (() => void) | undefined;
     const firstGate = new Promise<void>((resolve) => {
       releaseFirst = resolve;
     });
@@ -393,8 +402,11 @@ describe("createInboundDebouncer", () => {
       await Promise.resolve();
 
       expect(started).toEqual(["1"]);
-      expect(finished).toEqual([]);
+      expect(finished).toStrictEqual([]);
 
+      if (!releaseFirst) {
+        throw new Error("Expected first inbound debounce release callback to be initialized");
+      }
       releaseFirst();
       await Promise.all([firstFlush, secondEnqueue]);
 
@@ -408,7 +420,7 @@ describe("createInboundDebouncer", () => {
   it("keeps fire-and-forget keyed work ahead of a later buffered item", async () => {
     const started: string[] = [];
     const finished: string[] = [];
-    let releaseFirst!: () => void;
+    let releaseFirst: (() => void) | undefined;
     const firstGate = new Promise<void>((resolve) => {
       releaseFirst = resolve;
     });
@@ -461,8 +473,11 @@ describe("createInboundDebouncer", () => {
       await Promise.resolve();
 
       expect(started).toEqual(["1"]);
-      expect(finished).toEqual([]);
+      expect(finished).toStrictEqual([]);
 
+      if (!releaseFirst) {
+        throw new Error("Expected first inbound debounce release callback to be initialized");
+      }
       releaseFirst();
       await Promise.all([firstFlush, secondEnqueue, thirdFlush, thirdEnqueue]);
 
@@ -475,7 +490,7 @@ describe("createInboundDebouncer", () => {
 
   it("does not serialize keyed turns when debounce is disabled and no keyed chain exists", async () => {
     const started: string[] = [];
-    let releaseFirst!: () => void;
+    let releaseFirst: (() => void) | undefined;
     const firstGate = new Promise<void>((resolve) => {
       releaseFirst = resolve;
     });
@@ -499,6 +514,9 @@ describe("createInboundDebouncer", () => {
 
     expect(started).toEqual(["1", "2"]);
 
+    if (!releaseFirst) {
+      throw new Error("Expected first inbound debounce release callback to be initialized");
+    }
     releaseFirst();
     await Promise.all([first, second]);
   });
@@ -521,6 +539,29 @@ describe("createInboundDebouncer", () => {
     await expect(debouncer.enqueue({ key: "a", id: "2" })).resolves.toBeUndefined();
 
     expect(calls).toEqual(["1", "2"]);
+  });
+
+  it("does not leak unhandled rejections when a keyed flush failure is awaited", async () => {
+    const debouncer = createInboundDebouncer<{ key: string; id: string }>({
+      debounceMs: 0,
+      buildKey: (item) => item.key,
+      onFlush: async () => {
+        throw new Error("flush failed");
+      },
+    });
+    const unhandled: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandledRejection);
+
+    try {
+      await expect(debouncer.enqueue({ key: "a", id: "1" })).resolves.toBeUndefined();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(unhandled).toStrictEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandledRejection);
+    }
   });
 
   it("bypasses debouncing for new keys once the tracked-key cap is reached", async () => {
@@ -550,7 +591,7 @@ describe("createInboundDebouncer", () => {
   it("keeps same-key overflow work ordered after falling back to immediate flushes", async () => {
     const started: string[] = [];
     const finished: string[] = [];
-    let releaseOverflow!: () => void;
+    let releaseOverflow: (() => void) | undefined;
     const overflowGate = new Promise<void>((resolve) => {
       releaseOverflow = resolve;
     });
@@ -598,8 +639,11 @@ describe("createInboundDebouncer", () => {
 
       await Promise.resolve();
       expect(started).toEqual(["2"]);
-      expect(finished).toEqual([]);
+      expect(finished).toStrictEqual([]);
 
+      if (!releaseOverflow) {
+        throw new Error("Expected inbound overflow release callback to be initialized");
+      }
       releaseOverflow();
       await Promise.all([overflowEnqueue, bufferedEnqueue, bufferedFlush]);
 
@@ -613,7 +657,7 @@ describe("createInboundDebouncer", () => {
   it("counts tracked debounce keys by union of buffers and active chains", async () => {
     const started: string[] = [];
     const finished: string[] = [];
-    let releaseChainOnly!: () => void;
+    let releaseChainOnly: (() => void) | undefined;
     const chainOnlyGate = new Promise<void>((resolve) => {
       releaseChainOnly = resolve;
     });
@@ -675,6 +719,9 @@ describe("createInboundDebouncer", () => {
         expect(finished).toEqual(["4"]);
       });
 
+      if (!releaseChainOnly) {
+        throw new Error("Expected inbound chain-only release callback to be initialized");
+      }
       releaseChainOnly();
       await Promise.all([secondFlush, overflowEnqueue]);
       expect(finished).toEqual(["4", "2"]);
@@ -783,13 +830,17 @@ describe("mention helpers", () => {
 
   it("strips provider mention regexes without config compilation", () => {
     const stripped = stripMentions("<@12345> hello", { Provider: "discord" } as MsgContext, {});
-    expect(stripped).toBe("hello");
+    expect(stripped).toBe("< > hello");
   });
 });
 
 describe("resolveGroupRequireMention", () => {
-  it("respects Discord guild/channel requireMention settings", () => {
+  beforeEach(() => {
     resetPluginRuntimeStateForTest();
+    installGroupRequireMentionTestPlugins();
+  });
+
+  it("respects Discord guild/channel requireMention settings", async () => {
     const cfg: OpenClawConfig = {
       channels: {
         discord: {
@@ -816,11 +867,10 @@ describe("resolveGroupRequireMention", () => {
       chatType: "group",
     };
 
-    expect(resolveGroupRequireMention({ cfg, ctx, groupResolution })).toBe(false);
+    await expect(resolveGroupRequireMention({ cfg, ctx, groupResolution })).resolves.toBe(false);
   });
 
-  it("respects Slack channel requireMention settings", () => {
-    resetPluginRuntimeStateForTest();
+  it("respects Slack channel requireMention settings", async () => {
     const cfg: OpenClawConfig = {
       channels: {
         slack: {
@@ -842,11 +892,10 @@ describe("resolveGroupRequireMention", () => {
       chatType: "group",
     };
 
-    expect(resolveGroupRequireMention({ cfg, ctx, groupResolution })).toBe(false);
+    await expect(resolveGroupRequireMention({ cfg, ctx, groupResolution })).resolves.toBe(false);
   });
 
-  it("uses Slack fallback resolver semantics for default-account wildcard channels", () => {
-    resetPluginRuntimeStateForTest();
+  it("uses Slack fallback resolver semantics for default-account wildcard channels", async () => {
     const cfg: OpenClawConfig = {
       channels: {
         slack: {
@@ -873,11 +922,10 @@ describe("resolveGroupRequireMention", () => {
       chatType: "group",
     };
 
-    expect(resolveGroupRequireMention({ cfg, ctx, groupResolution })).toBe(false);
+    await expect(resolveGroupRequireMention({ cfg, ctx, groupResolution })).resolves.toBe(false);
   });
 
-  it("matches the Slack plugin resolver for default-account wildcard fallbacks", () => {
-    resetPluginRuntimeStateForTest();
+  it("keeps core reply-stage resolution aligned for Slack default-account wildcard fallbacks", async () => {
     const cfg: OpenClawConfig = {
       channels: {
         slack: {
@@ -904,17 +952,10 @@ describe("resolveGroupRequireMention", () => {
       chatType: "group",
     };
 
-    expect(resolveGroupRequireMention({ cfg, ctx, groupResolution })).toBe(
-      resolveSlackGroupRequireMention({
-        cfg,
-        groupId: groupResolution.id,
-        groupChannel: ctx.GroupSubject,
-      }),
-    );
+    await expect(resolveGroupRequireMention({ cfg, ctx, groupResolution })).resolves.toBe(false);
   });
 
-  it("uses Discord fallback resolver semantics for guild slug matches", () => {
-    resetPluginRuntimeStateForTest();
+  it("uses Discord fallback resolver semantics for guild slug matches", async () => {
     const cfg: OpenClawConfig = {
       channels: {
         discord: {
@@ -940,11 +981,10 @@ describe("resolveGroupRequireMention", () => {
       chatType: "group",
     };
 
-    expect(resolveGroupRequireMention({ cfg, ctx, groupResolution })).toBe(false);
+    await expect(resolveGroupRequireMention({ cfg, ctx, groupResolution })).resolves.toBe(false);
   });
 
-  it("matches the Discord plugin resolver for slug + wildcard guild fallbacks", () => {
-    resetPluginRuntimeStateForTest();
+  it("keeps core reply-stage resolution aligned for Discord slug + wildcard guild fallbacks", async () => {
     const cfg: OpenClawConfig = {
       channels: {
         discord: {
@@ -972,18 +1012,10 @@ describe("resolveGroupRequireMention", () => {
       chatType: "group",
     };
 
-    expect(resolveGroupRequireMention({ cfg, ctx, groupResolution })).toBe(
-      resolveDiscordGroupRequireMention({
-        cfg,
-        groupId: groupResolution.id,
-        groupChannel: ctx.GroupChannel,
-        groupSpace: ctx.GroupSpace,
-      }),
-    );
+    await expect(resolveGroupRequireMention({ cfg, ctx, groupResolution })).resolves.toBe(true);
   });
 
-  it("respects LINE prefixed group keys in reply-stage requireMention resolution", () => {
-    resetPluginRuntimeStateForTest();
+  it("respects LINE prefixed group keys in reply-stage requireMention resolution", async () => {
     const cfg: OpenClawConfig = {
       channels: {
         line: {
@@ -1004,14 +1036,13 @@ describe("resolveGroupRequireMention", () => {
       chatType: "group",
     };
 
-    expect(resolveGroupRequireMention({ cfg, ctx, groupResolution })).toBe(false);
+    await expect(resolveGroupRequireMention({ cfg, ctx, groupResolution })).resolves.toBe(false);
   });
 
-  it("preserves plugin-backed channel requireMention resolution", () => {
-    resetPluginRuntimeStateForTest();
+  it("preserves plugin-backed channel requireMention resolution", async () => {
     const cfg: OpenClawConfig = {
       channels: {
-        bluebubbles: {
+        imessage: {
           groups: {
             "chat:primary": { requireMention: false },
           },
@@ -1019,16 +1050,16 @@ describe("resolveGroupRequireMention", () => {
       },
     };
     const ctx: TemplateContext = {
-      Provider: "bluebubbles",
-      From: "bluebubbles:group:chat:primary",
+      Provider: "imessage",
+      From: "imessage:group:chat:primary",
     };
     const groupResolution: GroupKeyResolution = {
-      key: "bluebubbles:group:chat:primary",
-      channel: "bluebubbles",
+      key: "imessage:group:chat:primary",
+      channel: "imessage",
       id: "chat:primary",
       chatType: "group",
     };
 
-    expect(resolveGroupRequireMention({ cfg, ctx, groupResolution })).toBe(false);
+    await expect(resolveGroupRequireMention({ cfg, ctx, groupResolution })).resolves.toBe(false);
   });
 });

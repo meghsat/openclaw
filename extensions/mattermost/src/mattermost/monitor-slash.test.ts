@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const listSkillCommandsForAgents = vi.hoisted(() => vi.fn());
 const parseStrictPositiveInteger = vi.hoisted(() => vi.fn());
@@ -10,15 +10,19 @@ const resolveCallbackUrl = vi.hoisted(() => vi.fn());
 const resolveSlashCommandConfig = vi.hoisted(() => vi.fn());
 const activateSlashCommands = vi.hoisted(() => vi.fn());
 
-vi.mock("../runtime-api.js", () => ({
+vi.mock("./runtime-api.js", () => ({
   listSkillCommandsForAgents,
   parseStrictPositiveInteger,
 }));
 
-vi.mock("./client.js", () => ({
-  fetchMattermostUserTeams,
-  normalizeMattermostBaseUrl,
-}));
+vi.mock("./client.js", async () => {
+  const actual = await vi.importActual<typeof import("./client.js")>("./client.js");
+  return {
+    ...actual,
+    fetchMattermostUserTeams,
+    normalizeMattermostBaseUrl,
+  };
+});
 
 vi.mock("./slash-commands.js", () => ({
   DEFAULT_COMMAND_SPECS: [
@@ -36,6 +40,24 @@ vi.mock("./slash-state.js", () => ({
 }));
 
 describe("mattermost monitor slash", () => {
+  let registerMattermostMonitorSlashCommands: typeof import("./monitor-slash.js").registerMattermostMonitorSlashCommands;
+
+  beforeAll(async () => {
+    ({ registerMattermostMonitorSlashCommands } = await import("./monitor-slash.js"));
+  });
+
+  beforeEach(() => {
+    listSkillCommandsForAgents.mockReset();
+    parseStrictPositiveInteger.mockReset();
+    fetchMattermostUserTeams.mockReset();
+    normalizeMattermostBaseUrl.mockClear();
+    isSlashCommandsEnabled.mockReset();
+    registerSlashCommands.mockReset();
+    resolveCallbackUrl.mockReset();
+    resolveSlashCommandConfig.mockReset();
+    activateSlashCommands.mockReset();
+  });
+
   afterEach(() => {
     vi.unstubAllEnvs();
   });
@@ -43,7 +65,6 @@ describe("mattermost monitor slash", () => {
   it("returns early when slash commands are disabled", async () => {
     resolveSlashCommandConfig.mockReturnValue({ enabled: false });
     isSlashCommandsEnabled.mockReturnValue(false);
-    const { registerMattermostMonitorSlashCommands } = await import("./monitor-slash.js");
 
     await registerMattermostMonitorSlashCommands({
       client: {} as never,
@@ -78,8 +99,6 @@ describe("mattermost monitor slash", () => {
       error: vi.fn(),
     };
 
-    const { registerMattermostMonitorSlashCommands } = await import("./monitor-slash.js");
-
     await registerMattermostMonitorSlashCommands({
       client: {} as never,
       cfg: { gateway: { port: 18789 } } as never,
@@ -112,14 +131,13 @@ describe("mattermost monitor slash", () => {
         originalName: "oc_ping",
       },
     ]);
-    expect(activateSlashCommands).toHaveBeenCalledWith(
-      expect.objectContaining({
-        commandTokens: ["token-1", "token-2"],
-        triggerMap: new Map([
-          ["oc_skill", "skill"],
-          ["oc_ping", "oc_ping"],
-        ]),
-      }),
+    const [activation] = activateSlashCommands.mock.calls[0] ?? [];
+    expect(activation?.commandTokens).toStrictEqual(["token-1", "token-2"]);
+    expect(activation?.triggerMap).toStrictEqual(
+      new Map([
+        ["oc_skill", "skill"],
+        ["oc_ping", "oc_ping"],
+      ]),
     );
     expect(runtime.log).toHaveBeenCalledWith(
       "mattermost: slash commands registered (2 commands across 2 teams, callback=https://openclaw.test/slash)",
@@ -140,8 +158,6 @@ describe("mattermost monitor slash", () => {
       error: vi.fn(),
     };
 
-    const { registerMattermostMonitorSlashCommands } = await import("./monitor-slash.js");
-
     await registerMattermostMonitorSlashCommands({
       client: {} as never,
       cfg: { gateway: { customBindHost: "loopback" } } as never,
@@ -152,9 +168,7 @@ describe("mattermost monitor slash", () => {
     });
 
     expect(runtime.error).toHaveBeenCalledWith(
-      expect.stringContaining(
-        "slash commands callbackUrl resolved to http://127.0.0.1:18789/slash",
-      ),
+      "mattermost: slash commands callbackUrl resolved to http://127.0.0.1:18789/slash (loopback) while baseUrl is https://chat.example.com. This MAY be unreachable depending on your deployment. If native slash commands don't work, set channels.mattermost.commands.callbackUrl to a URL reachable from the Mattermost server (e.g. your public reverse proxy URL).",
     );
     expect(runtime.error).toHaveBeenCalledWith(
       "mattermost: failed to register slash commands for team team-2: Error: boom",

@@ -1,19 +1,19 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { resolveStateDir } from "openclaw/plugin-sdk/state-paths";
+import { resolvePreferredOpenClawTmpDir } from "openclaw/plugin-sdk/temp-path";
+import { captureEnv } from "openclaw/plugin-sdk/test-env";
+import { mockPinnedHostnameResolution } from "openclaw/plugin-sdk/test-env";
+import { optimizeImageToPng } from "openclaw/plugin-sdk/web-media";
 import sharp from "sharp";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { resolveStateDir } from "../../../src/config/paths.js";
-import { resolvePreferredOpenClawTmpDir } from "../../../src/infra/tmp-openclaw-dir.js";
-import { optimizeImageToPng } from "../../../src/media/image-ops.js";
-import { mockPinnedHostnameResolution } from "../../../src/test-helpers/ssrf.js";
-import { captureEnv } from "../../../test/helpers/extensions/env.js";
-
-let LocalMediaAccessError: typeof import("./media.js").LocalMediaAccessError;
-let loadWebMedia: typeof import("./media.js").loadWebMedia;
-let loadWebMediaRaw: typeof import("./media.js").loadWebMediaRaw;
-let optimizeImageToJpeg: typeof import("./media.js").optimizeImageToJpeg;
-let sendVoiceMessageDiscord: typeof import("../../discord/src/send.js").sendVoiceMessageDiscord;
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  LocalMediaAccessError,
+  loadWebMedia,
+  loadWebMediaRaw,
+  optimizeImageToJpeg,
+} from "./media.js";
 
 let fixtureRoot = "";
 let fixtureFileCount = 0;
@@ -54,9 +54,6 @@ function cloneStatWithDev<T extends { dev: number | bigint }>(stat: T, dev: numb
 }
 
 beforeAll(async () => {
-  ({ LocalMediaAccessError, loadWebMedia, loadWebMediaRaw, optimizeImageToJpeg } =
-    await import("./media.js"));
-  ({ sendVoiceMessageDiscord } = await import("../../discord/src/send.js"));
   fixtureRoot = await fs.mkdtemp(
     path.join(resolvePreferredOpenClawTmpDir(), "openclaw-media-test-"),
   );
@@ -251,10 +248,12 @@ describe("web media loading", () => {
   });
 
   it("uses content-disposition filename when available", async () => {
+    const pdfBytes = Buffer.from("%PDF-1.4");
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
       ok: true,
       body: true,
-      arrayBuffer: async () => Buffer.from("%PDF-1.4").buffer,
+      arrayBuffer: async () =>
+        pdfBytes.buffer.slice(pdfBytes.byteOffset, pdfBytes.byteOffset + pdfBytes.byteLength),
       headers: {
         get: (name: string) => {
           if (name === "content-disposition") {
@@ -319,35 +318,6 @@ describe("web media loading", () => {
   });
 });
 
-describe("Discord voice message input hardening", () => {
-  it("rejects unsafe voice message inputs", async () => {
-    const cases = [
-      {
-        name: "local path outside allowed media roots",
-        candidate: path.join(process.cwd(), "package.json"),
-        expectedMessage: /Local media path is not under an allowed directory/i,
-      },
-      {
-        name: "private-network URL",
-        candidate: "http://127.0.0.1/voice.ogg",
-        expectedMessage: /Failed to fetch media|Blocked|private|internal/i,
-      },
-      {
-        name: "non-http URL scheme",
-        candidate: "rtsp://example.com/voice.ogg",
-        expectedMessage: /Local media path is not under an allowed directory|ENOENT|no such file/i,
-      },
-    ] as const;
-
-    for (const testCase of cases) {
-      await expect(
-        sendVoiceMessageDiscord("channel:123", testCase.candidate),
-        testCase.name,
-      ).rejects.toThrow(testCase.expectedMessage);
-    }
-  });
-});
-
 describe("local media root guard", () => {
   it("rejects local paths outside allowed roots", async () => {
     // Explicit roots that don't contain the temp file.
@@ -382,6 +352,10 @@ describe("local media root guard", () => {
     const actualLstat = await fs.lstat(tinyPngFile);
     const actualStat = await fs.stat(tinyPngFile);
     const zeroDev = typeof actualLstat.dev === "bigint" ? 0n : 0;
+    // Resolve before mocking platform: under `win32` the helper returns the
+    // os.tmpdir() fallback rather than the POSIX `/tmp/openclaw` root that
+    // actually holds `tinyPngFile` on this Linux test runner (#60713).
+    const realTmpRoot = resolvePreferredOpenClawTmpDir();
 
     const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("win32");
     const lstatSpy = vi
@@ -391,7 +365,7 @@ describe("local media root guard", () => {
 
     try {
       const result = await loadWebMedia(tinyPngFile, 1024 * 1024, {
-        localRoots: [resolvePreferredOpenClawTmpDir()],
+        localRoots: [realTmpRoot],
       });
       expect(result.kind).toBe("image");
       expect(result.buffer.length).toBeGreaterThan(0);

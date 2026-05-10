@@ -1,16 +1,16 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Buffer } from "node:buffer";
+import { describe, expect, it, vi } from "vitest";
 import {
   config,
-  flush,
   getSignalToolResultTestMocks,
   installSignalToolResultTestHooks,
   setSignalToolResultTestConfig,
 } from "./monitor.tool-result.test-harness.js";
 
 installSignalToolResultTestHooks();
-let monitorSignalProvider: typeof import("./monitor.js").monitorSignalProvider;
+const { monitorSignalProvider } = await import("./monitor.js");
 
-const { replyMock, sendMock, streamMock, upsertPairingRequestMock } =
+const { replyMock, sendMock, streamMock, signalRpcRequestMock, upsertPairingRequestMock } =
   getSignalToolResultTestMocks();
 
 type MonitorSignalProviderOptions = Parameters<typeof monitorSignalProvider>[0];
@@ -19,11 +19,6 @@ async function runMonitorWithMocks(opts: MonitorSignalProviderOptions) {
   return monitorSignalProvider(opts);
 }
 describe("monitorSignalProvider tool results", () => {
-  beforeEach(async () => {
-    vi.resetModules();
-    ({ monitorSignalProvider } = await import("./monitor.js"));
-  });
-
   it("pairs uuid-only senders with a uuid allowlist entry", async () => {
     const baseChannels = (config.channels ?? {}) as Record<string, unknown>;
     const baseSignal = (baseChannels.signal ?? {}) as Record<string, unknown>;
@@ -66,16 +61,13 @@ describe("monitorSignalProvider tool results", () => {
       abortSignal: abortController.signal,
     });
 
-    await flush();
-
     expect(replyMock).not.toHaveBeenCalled();
-    expect(upsertPairingRequestMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        channel: "signal",
-        id: `uuid:${uuid}`,
-        meta: expect.objectContaining({ name: "Ada" }),
-      }),
-    );
+    expect(upsertPairingRequestMock).toHaveBeenCalledWith({
+      channel: "signal",
+      id: `uuid:${uuid}`,
+      accountId: "default",
+      meta: { name: "Ada" },
+    });
     expect(sendMock).toHaveBeenCalledTimes(1);
     expect(sendMock.mock.calls[0]?.[0]).toBe(`signal:${uuid}`);
     expect(String(sendMock.mock.calls[0]?.[1] ?? "")).toContain(
@@ -114,9 +106,58 @@ describe("monitorSignalProvider tool results", () => {
       await monitorPromise;
 
       expect(streamMock).toHaveBeenCalledTimes(2);
+      expect(streamMock.mock.calls[0]?.[0]).toMatchObject({ timeoutMs: 0 });
+      expect(streamMock.mock.calls[1]?.[0]).toMatchObject({ timeoutMs: 0 });
     } finally {
       randomSpy.mockRestore();
       vi.useRealTimers();
     }
+  });
+
+  it("sizes attachment RPC response caps from mediaMaxMb", async () => {
+    const abortController = new AbortController();
+    const maxBytes = 2 * 1024 * 1024;
+    const expectedMaxResponseBytes = Math.ceil((maxBytes * 4) / 3) + 64 * 1024;
+
+    replyMock.mockResolvedValue({ text: "ok" });
+    signalRpcRequestMock.mockResolvedValue({ data: Buffer.from("hello").toString("base64") });
+    streamMock.mockImplementation(async ({ onEvent }) => {
+      await onEvent({
+        event: "receive",
+        data: JSON.stringify({
+          envelope: {
+            sourceNumber: "+15550001111",
+            sourceName: "Ada",
+            timestamp: 1,
+            dataMessage: {
+              message: "",
+              attachments: [{ id: "attachment-1", size: 1_500_000, contentType: "text/plain" }],
+            },
+          },
+        }),
+      });
+      abortController.abort();
+    });
+
+    await monitorSignalProvider({
+      autoStart: false,
+      baseUrl: "http://127.0.0.1:8080",
+      mediaMaxMb: 2,
+      abortSignal: abortController.signal,
+    });
+
+    expect(signalRpcRequestMock).toHaveBeenCalledWith(
+      "getAttachment",
+      {
+        id: "attachment-1",
+        recipient: "+15550001111",
+      },
+      {
+        baseUrl: "http://127.0.0.1:8080",
+        timeoutMs: undefined,
+        apiMode: "auto",
+        maxResponseBytes: expectedMaxResponseBytes,
+      },
+    );
   });
 });

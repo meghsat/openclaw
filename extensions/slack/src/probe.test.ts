@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { probeSlack } from "./probe.js";
 
 const authTestMock = vi.hoisted(() => vi.fn());
 const createSlackWebClientMock = vi.hoisted(() => vi.fn());
@@ -8,15 +9,12 @@ vi.mock("./client.js", () => ({
   createSlackWebClient: createSlackWebClientMock,
 }));
 
-vi.mock("openclaw/plugin-sdk/text-runtime", () => ({
+vi.mock("openclaw/plugin-sdk/text-utility-runtime", () => ({
   withTimeout: withTimeoutMock,
 }));
 
-let probeSlack: typeof import("./probe.js").probeSlack;
-
 describe("probeSlack", () => {
-  beforeEach(async () => {
-    vi.resetModules();
+  beforeEach(() => {
     authTestMock.mockReset();
     createSlackWebClientMock.mockReset();
     withTimeoutMock.mockReset();
@@ -27,7 +25,6 @@ describe("probeSlack", () => {
       },
     });
     withTimeoutMock.mockImplementation(async (promise: Promise<unknown>) => await promise);
-    ({ probeSlack } = await import("./probe.js"));
   });
 
   it("maps Slack auth metadata on success", async () => {

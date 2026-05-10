@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createSubagentSpawnTestConfig,
   loadSubagentSpawnModuleForTest,
@@ -53,6 +53,11 @@ function createConfigOverride(overrides?: Record<string, unknown>) {
         },
       ],
     },
+    session: {
+      threadBindings: {
+        defaultSpawnContext: "isolated",
+      },
+    },
     ...overrides,
   });
 }
@@ -68,6 +73,20 @@ function resolveTestAgentWorkspace(cfg: Record<string, unknown>, agentId: string
 function getRegisteredRun() {
   return hoisted.registerSubagentRunMock.mock.calls.at(0)?.[0] as
     | Record<string, unknown>
+    | undefined;
+}
+
+function findLastSessionDeleteCall() {
+  return hoisted.callGatewayMock.mock.calls.findLast(
+    ([request]) => (request as { method?: string }).method === "sessions.delete",
+  )?.[0] as
+    | {
+        params?: {
+          key?: string;
+          deleteTranscript?: boolean;
+          emitLifecycleHooks?: boolean;
+        };
+      }
     | undefined;
 }
 
@@ -87,21 +106,23 @@ async function expectAcceptedWorkspace(params: { agentId: string; expectedWorksp
   );
 
   expect(result.status).toBe("accepted");
-  expect(getRegisteredRun()).toMatchObject({
-    workspaceDir: params.expectedWorkspaceDir,
-  });
+  expect(getRegisteredRun()?.workspaceDir).toBe(params.expectedWorkspaceDir);
 }
 
 describe("spawnSubagentDirect workspace inheritance", () => {
-  beforeEach(async () => {
+  beforeAll(async () => {
     ({ resetSubagentRegistryForTests, spawnSubagentDirect } = await loadSubagentSpawnModuleForTest({
       callGatewayMock: hoisted.callGatewayMock,
-      loadConfig: () => hoisted.configOverride,
+      getRuntimeConfig: () => hoisted.configOverride,
       registerSubagentRunMock: hoisted.registerSubagentRunMock,
       hookRunner: hoisted.hookRunner,
       resolveAgentConfig: resolveTestAgentConfig,
       resolveAgentWorkspaceDir: resolveTestAgentWorkspace,
+      resetModules: false,
     }));
+  });
+
+  beforeEach(() => {
     resetSubagentRegistryForTests();
     hoisted.callGatewayMock.mockClear();
     hoisted.registerSubagentRunMock.mockClear();
@@ -144,6 +165,40 @@ describe("spawnSubagentDirect workspace inheritance", () => {
     });
   });
 
+  async function spawnAndReadAgentParams(task: { task: string; lightContext?: boolean }) {
+    await spawnSubagentDirect(task, {
+      agentSessionKey: "agent:main:main",
+      agentChannel: "telegram",
+      agentAccountId: "123",
+      agentTo: "456",
+      workspaceDir: "/tmp/requester-workspace",
+    });
+
+    const agentCall = hoisted.callGatewayMock.mock.calls.find(
+      ([request]) => (request as { method?: string }).method === "agent",
+    )?.[0] as { params?: Record<string, unknown> } | undefined;
+    return agentCall?.params;
+  }
+
+  it("passes lightweight bootstrap context flags for lightContext subagent spawns", async () => {
+    const agentParams = await spawnAndReadAgentParams({
+      task: "inspect workspace",
+      lightContext: true,
+    });
+
+    expect(agentParams?.bootstrapContextMode).toBe("lightweight");
+    expect(agentParams?.bootstrapContextRunKind).toBe("default");
+  });
+
+  it("omits bootstrap context flags for default subagent spawns", async () => {
+    const agentParams = await spawnAndReadAgentParams({
+      task: "inspect workspace",
+    });
+
+    expect(agentParams).not.toHaveProperty("bootstrapContextMode");
+    expect(agentParams).not.toHaveProperty("bootstrapContextRunKind");
+  });
+
   it("deletes the provisional child session when a non-thread subagent start fails", async () => {
     hoisted.callGatewayMock.mockImplementation(
       async (request: {
@@ -176,30 +231,15 @@ describe("spawnSubagentDirect workspace inheritance", () => {
       },
     );
 
-    expect(result).toMatchObject({
-      status: "error",
-      error: "spawn startup failed",
-    });
+    expect(result.status).toBe("error");
+    expect(result.error).toBe("spawn startup failed");
     expect(result.childSessionKey).toMatch(/^agent:main:subagent:/);
     expect(hoisted.registerSubagentRunMock).not.toHaveBeenCalled();
 
-    const deleteCall = hoisted.callGatewayMock.mock.calls.find(
-      ([request]) => (request as { method?: string }).method === "sessions.delete",
-    )?.[0] as
-      | {
-          params?: {
-            key?: string;
-            deleteTranscript?: boolean;
-            emitLifecycleHooks?: boolean;
-          };
-        }
-      | undefined;
-
-    expect(deleteCall?.params).toMatchObject({
-      key: result.childSessionKey,
-      deleteTranscript: true,
-      emitLifecycleHooks: false,
-    });
+    const deleteCall = findLastSessionDeleteCall();
+    expect(deleteCall?.params?.key).toBe(result.childSessionKey);
+    expect(deleteCall?.params?.deleteTranscript).toBe(true);
+    expect(deleteCall?.params?.emitLifecycleHooks).toBe(false);
   });
 
   it("keeps lifecycle hooks enabled when registerSubagentRun fails after thread binding succeeds", async () => {
@@ -234,6 +274,7 @@ describe("spawnSubagentDirect workspace inheritance", () => {
         task: "fail after register with thread binding",
         thread: true,
         mode: "session",
+        context: "isolated",
       },
       {
         agentSessionKey: "agent:main:main",
@@ -244,29 +285,14 @@ describe("spawnSubagentDirect workspace inheritance", () => {
       },
     );
 
-    expect(result).toMatchObject({
-      status: "error",
-      error: "Failed to register subagent run: registry unavailable",
-      childSessionKey: expect.stringMatching(/^agent:main:subagent:/),
-      runId: "run-thread-register-fail",
-    });
+    expect(result.status).toBe("error");
+    expect(result.error).toBe("Failed to register subagent run: registry unavailable");
+    expect(result.childSessionKey).toMatch(/^agent:main:subagent:/);
+    expect(result.runId).toBe("run-thread-register-fail");
 
-    const deleteCall = hoisted.callGatewayMock.mock.calls.findLast(
-      ([request]) => (request as { method?: string }).method === "sessions.delete",
-    )?.[0] as
-      | {
-          params?: {
-            key?: string;
-            deleteTranscript?: boolean;
-            emitLifecycleHooks?: boolean;
-          };
-        }
-      | undefined;
-
-    expect(deleteCall?.params).toMatchObject({
-      key: result.childSessionKey,
-      deleteTranscript: true,
-      emitLifecycleHooks: true,
-    });
+    const deleteCall = findLastSessionDeleteCall();
+    expect(deleteCall?.params?.key).toBe(result.childSessionKey);
+    expect(deleteCall?.params?.deleteTranscript).toBe(true);
+    expect(deleteCall?.params?.emitLifecycleHooks).toBe(true);
   });
 });
