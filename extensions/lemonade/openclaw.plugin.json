@@ -1,0 +1,24 @@
+{
+  "id": "lemonade",
+  "providers": ["lemonade"],
+  "providerAuthEnvVars": {
+    "lemonade": ["LEMONADE_API_KEY"]
+  },
+  "providerAuthChoices": [
+    {
+      "provider": "lemonade",
+      "method": "custom",
+      "choiceId": "lemonade",
+      "choiceLabel": "Lemonade",
+      "choiceHint": "Local AI server with GPU/NPU acceleration (OpenAI-compatible)",
+      "groupId": "lemonade",
+      "groupLabel": "Lemonade",
+      "groupHint": "Local AI server with GPU/NPU acceleration"
+    }
+  ],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

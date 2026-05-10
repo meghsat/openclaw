@@ -172,6 +172,31 @@ async function restartGatewayAfterReadyTimeout(params: {
     params.gateway.connect(false);
   }
 }
+  const onAbort = () => {
+    lifecycleStopping = true;
+    reconnectStallWatchdog.disarm();
+    const at = Date.now();
+    pushStatus({ connected: false, lastEventAt: at });
+    if (!gateway) {
+      return;
+    }
+    // Carbon reconnects from the socket close handler even for intentional
+    // disconnects. Strip close/error listeners before calling disconnect so
+    // the socket closing during shutdown does not trigger a reconnect attempt
+    // with maxAttempts: 0, which would throw an uncaught exception.
+    const mutableGateway = gateway as MutableGateway;
+    const socket = mutableGateway.ws;
+    if (socket) {
+      for (const listener of socket.listeners("close")) {
+        socket.removeListener("close", listener);
+      }
+      for (const listener of socket.listeners("error")) {
+        socket.removeListener("error", listener);
+      }
+    }
+    gateway.options.reconnect = { maxAttempts: 0 };
+    gateway.disconnect();
+  };
 
 function parseGatewayCloseCode(message: string): number | undefined {
   const match = /Gateway websocket closed:\s*(\d{3,5})/.exec(message);

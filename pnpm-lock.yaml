@@ -876,6 +876,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
 
+  extensions/lemonade: {}
+
   extensions/line:
     dependencies:
       '@line/bot-sdk':

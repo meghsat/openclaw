@@ -1,8 +1,8 @@
-import {
-  formatReasoningMessage,
-  resolveAckReaction,
-  resolveHumanDelayConfig,
-} from "openclaw/plugin-sdk/agent-runtime";
+import { exec } from "node:child_process";
+import { promisify } from "node:util";
+import { ChannelType, type RequestClient } from "@buape/carbon";
+import { resolveAckReaction, resolveHumanDelayConfig, EmbeddedBlockChunker, formatReasoningMessage } from "openclaw/plugin-sdk/agent-runtime";
+import { EmbeddedBlockChunker } from "openclaw/plugin-sdk/agent-runtime";
 import {
   createStatusReactionController,
   DEFAULT_TIMING,
@@ -33,8 +33,12 @@ import type { ReplyPayload } from "openclaw/plugin-sdk/reply-dispatch-runtime";
 import { resolveSendableOutboundReplyParts } from "openclaw/plugin-sdk/reply-payload";
 import { danger, logVerbose, shouldLogVerbose } from "openclaw/plugin-sdk/runtime-env";
 import { resolveDiscordMaxLinesPerMessage } from "../accounts.js";
-import { createDiscordRestClient } from "../client.js";
-import { removeReactionDiscord } from "../send.js";
+import { chunkDiscordTextWithMode } from "../chunk.js";
+import { resolveDiscordDraftStreamingChunking } from "../draft-chunking.js";
+import { createDiscordDraftStream } from "../draft-stream.js";
+import { generateImage } from "openclaw/plugin-sdk/image-generation-runtime";
+import { saveMediaBuffer } from "openclaw/plugin-sdk/media-runtime";
+import { reactMessageDiscord, removeReactionDiscord, sendMessageDiscord } from "../send.js";
 import { editMessageDiscord } from "../send.messages.js";
 import { resolveDiscordTargetChannelId } from "../send.shared.js";
 import { resolveDiscordChannelId } from "../targets.js";
@@ -53,6 +57,8 @@ import {
   DISCORD_ATTACHMENT_TOTAL_TIMEOUT_MS,
 } from "./timeouts.js";
 import { sendTyping } from "./typing.js";
+
+const execAsync = promisify(exec);
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -293,6 +299,173 @@ export async function processDiscordMessage(
     const remove = readToolBooleanArg(args, "remove");
     if (!emoji || remove) {
       return;
+  if (statusReactionsEnabled) {
+    void statusReactions.setQueued();
+  }
+  // Direct image generation: bypass LLM and pass message text straight to the image model.
+  if (channelConfig?.directImageGen) {
+    try {
+      if (statusReactionsEnabled) {
+        await statusReactions.setThinking();
+      }
+      const result = await generateImage({ cfg, prompt: text });
+      const savedImages = await Promise.all(
+        result.images.map((image, index) =>
+          saveMediaBuffer(
+            image.buffer,
+            image.mimeType,
+            "tool-image-generation",
+            undefined,
+            image.fileName ?? `image-${index + 1}.png`,
+          ),
+        ),
+      );
+      for (const saved of savedImages) {
+        await sendMessageDiscord(`channel:${messageChannelId}`, "", {
+          cfg,
+          token,
+          rest: discordRest,
+          accountId,
+          mediaUrl: saved.path,
+          mediaLocalRoots,
+          replyTo: message.id,
+        });
+      }
+      if (statusReactionsEnabled) {
+        await statusReactions.setDone();
+        if (removeAckAfterReply) {
+          void statusReactions.clear();
+        } else {
+          void statusReactions.restoreInitial();
+        }
+      }
+    } catch (err) {
+      runtime.error?.(danger(`discord direct image gen failed: ${String(err)}`));
+      if (statusReactionsEnabled) {
+        await statusReactions.setError();
+      }
+    }
+    return;
+  }
+
+  const fromLabel = isDirectMessage
+    ? buildDirectLabel(author)
+    : buildGuildLabel({
+        guild: data.guild ?? undefined,
+        channelName: channelName ?? messageChannelId,
+        channelId: messageChannelId,
+      });
+  const senderLabel = sender.label;
+  const isForumParent =
+    threadParentType === ChannelType.GuildForum || threadParentType === ChannelType.GuildMedia;
+  const forumParentSlug =
+    isForumParent && threadParentName ? normalizeDiscordSlug(threadParentName) : "";
+  const threadChannelId = threadChannel?.id;
+  const isForumStarter =
+    Boolean(threadChannelId && isForumParent && forumParentSlug) && message.id === threadChannelId;
+  const forumContextLine = isForumStarter ? `[Forum parent: #${forumParentSlug}]` : null;
+  const groupChannel = isGuildMessage && displayChannelSlug ? `#${displayChannelSlug}` : undefined;
+  const groupSubject = isDirectMessage ? undefined : groupChannel;
+  const senderName = sender.isPluralKit
+    ? (sender.name ?? author.username)
+    : (data.member?.nickname ?? author.globalName ?? author.username);
+  const senderUsername = sender.isPluralKit
+    ? (sender.tag ?? sender.name ?? author.username)
+    : author.username;
+  const senderTag = sender.tag;
+  const { groupSystemPrompt, ownerAllowFrom, untrustedContext } = buildDiscordInboundAccessContext({
+    channelConfig,
+    guildInfo,
+    sender: { id: sender.id, name: sender.name, tag: sender.tag },
+    allowNameMatching: isDangerousNameMatchingEnabled(discordConfig),
+    isGuild: isGuildMessage,
+    channelTopic: channelInfo?.topic,
+    messageBody: text,
+  });
+  let dynamicGroupSystemPrompt = groupSystemPrompt;
+  if (channelConfig?.preRunScript?.trim() && isGuildMessage) {
+    try {
+      const { stdout } = await execAsync(channelConfig.preRunScript, {
+        timeout: 180_000,
+        maxBuffer: 100 * 1024,
+        env: {
+          ...process.env,
+          OPENCLAW_USER_MESSAGE: text,
+          OPENCLAW_CHANNEL_ID: messageChannelId,
+        },
+      });
+      const scriptOutput = stdout.trim();
+      if (scriptOutput) {
+        dynamicGroupSystemPrompt = [groupSystemPrompt, scriptOutput]
+          .filter(Boolean)
+          .join("\n\n");
+      }
+    } catch (err) {
+      logVerbose(
+        `discord: preRunScript failed for channel ${messageChannelId}: ${String(err)}`,
+      );
+    }
+  }
+  const storePath = resolveStorePath(cfg.session?.store, {
+    agentId: route.agentId,
+  });
+  const envelopeOptions = resolveEnvelopeFormatOptions(cfg);
+  const previousTimestamp = readSessionUpdatedAt({
+    storePath,
+    sessionKey: route.sessionKey,
+  });
+  let combinedBody = formatInboundEnvelope({
+    channel: "Discord",
+    from: fromLabel,
+    timestamp: resolveTimestampMs(message.timestamp),
+    body: text,
+    chatType: isDirectMessage ? "direct" : "channel",
+    senderLabel,
+    previousTimestamp,
+    envelope: envelopeOptions,
+  });
+  const shouldIncludeChannelHistory =
+    !isDirectMessage && !(isGuildMessage && channelConfig?.autoThread && !threadChannel);
+  if (shouldIncludeChannelHistory) {
+    combinedBody = buildPendingHistoryContextFromMap({
+      historyMap: guildHistories,
+      historyKey: messageChannelId,
+      limit: historyLimit,
+      currentMessage: combinedBody,
+      formatEntry: (entry) =>
+        formatInboundEnvelope({
+          channel: "Discord",
+          from: fromLabel,
+          timestamp: entry.timestamp,
+          body: `${entry.body} [id:${entry.messageId ?? "unknown"} channel:${messageChannelId}]`,
+          chatType: "channel",
+          senderLabel: entry.sender,
+          envelope: envelopeOptions,
+        }),
+    });
+  }
+  const replyContext = resolveReplyContext(message, resolveDiscordMessageText);
+  if (forumContextLine) {
+    combinedBody = `${combinedBody}\n${forumContextLine}`;
+  }
+
+  let threadStarterBody: string | undefined;
+  let threadLabel: string | undefined;
+  let parentSessionKey: string | undefined;
+  if (threadChannel) {
+    const includeThreadStarter = channelConfig?.includeThreadStarter !== false;
+    if (includeThreadStarter) {
+      const starter = await resolveDiscordThreadStarter({
+        channel: threadChannel,
+        client,
+        parentId: threadParentId,
+        parentType: threadParentType,
+        resolveTimestampMs,
+      });
+      if (starter?.text) {
+        // Keep thread starter as raw text; metadata is provided out-of-band in the system prompt.
+        threadStarterBody = starter.text;
+      }
     }
     const trackedMessageId =
       readToolStringArg(args, "messageId") ?? readToolStringArg(args, "message_id") ?? message.id;
@@ -360,6 +533,60 @@ export async function processDiscordMessage(
     replyTarget,
     replyReference,
   } = processContext;
+  // Keep DM routes user-addressed so follow-up sends resolve direct session keys.
+  const lastRouteTo = isDirectMessage ? `user:${author.id}` : effectiveTo;
+
+  const inboundHistory =
+    shouldIncludeChannelHistory && historyLimit > 0
+      ? (guildHistories.get(messageChannelId) ?? []).map((entry) => ({
+          sender: entry.sender,
+          body: entry.body,
+          timestamp: entry.timestamp,
+        }))
+      : undefined;
+
+  const ctxPayload = finalizeInboundContext({
+    Body: combinedBody,
+    BodyForAgent: baseText ?? text,
+    InboundHistory: inboundHistory,
+    RawBody: baseText,
+    CommandBody: baseText,
+    From: effectiveFrom,
+    To: effectiveTo,
+    SessionKey: boundSessionKey ?? autoThreadContext?.SessionKey ?? threadKeys.sessionKey,
+    AccountId: route.accountId,
+    ChatType: isDirectMessage ? "direct" : "channel",
+    ConversationLabel: fromLabel,
+    SenderName: senderName,
+    SenderId: sender.id,
+    SenderUsername: senderUsername,
+    SenderTag: senderTag,
+    GroupSubject: groupSubject,
+    GroupChannel: groupChannel,
+    UntrustedContext: untrustedContext,
+    GroupSystemPrompt: isGuildMessage ? dynamicGroupSystemPrompt : undefined,
+    GroupSpace: isGuildMessage ? (guildInfo?.id ?? guildSlug) || undefined : undefined,
+    OwnerAllowFrom: ownerAllowFrom,
+    Provider: "discord" as const,
+    Surface: "discord" as const,
+    WasMentioned: effectiveWasMentioned,
+    MessageSid: message.id,
+    ReplyToId: replyContext?.id,
+    ReplyToBody: replyContext?.body,
+    ReplyToSender: replyContext?.sender,
+    ParentSessionKey: autoThreadContext?.ParentSessionKey ?? threadKeys.parentSessionKey,
+    MessageThreadId: threadChannel?.id ?? autoThreadContext?.createdThreadId ?? undefined,
+    ThreadStarterBody: threadStarterBody,
+    ThreadLabel: threadLabel,
+    Timestamp: resolveTimestampMs(message.timestamp),
+    ...mediaPayload,
+    CommandAuthorized: commandAuthorized,
+    CommandSource: "text" as const,
+    // Originating channel for reply routing.
+    OriginatingChannel: "discord" as const,
+    OriginatingTo: autoThreadContext?.OriginatingTo ?? replyTarget,
+  });
+  const persistedSessionKey = ctxPayload.SessionKey ?? route.sessionKey;
   observer?.onReplyPlanResolved?.({
     createdThreadId: replyPlan.createdThreadId,
     sessionKey: persistedSessionKey,
