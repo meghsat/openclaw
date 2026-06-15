@@ -1,6 +1,8 @@
 // LLM Core type module defines shared TypeScript contracts.
 export type { AssistantMessageDiagnostic, DiagnosticErrorInfo } from "./utils/diagnostics.js";
 import type { AssistantMessageDiagnostic } from "./utils/diagnostics.js";
+export type { RouterDecision } from "../../src/llm/vsr-types.js";
+import type { RouterDecision } from "../../src/llm/vsr-types.js";
 
 /** Provider API families with first-class request/stream adapters in OpenClaw. */
 export type KnownApi =
@@ -299,6 +301,7 @@ export interface AssistantMessage {
   errorCode?: string;
   errorType?: string;
   errorBody?: string;
+  routerDecision?: RouterDecision; // vLLM Semantic Router decision metadata (when routed via router proxy)
   timestamp: number; // Unix timestamp in milliseconds
 }
 
