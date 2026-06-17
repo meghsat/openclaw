@@ -1,6 +1,8 @@
 // Handles TUI keyboard, paste, backend, and command events.
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import { classifyFailoverReason, isAuthErrorMessage } from "../agents/embedded-agent-helpers.js";
+import { formatRouterDecisionSummary } from "../llm/vsr-parser.js";
+import type { RouterDecision } from "../llm/vsr-types.js";
 import { parseAgentSessionKey } from "../sessions/session-key-utils.js";
 import { formatRawAssistantErrorForUi } from "../shared/assistant-error-format.js";
 import { asString, extractTextFromMessage, isCommandMessage } from "./tui-formatters.js";
@@ -668,6 +670,11 @@ export function createEventHandlers(context: EventHandlerContext) {
         chatLog.dropAssistant(evt.runId);
       } else {
         chatLog.finalizeAssistant(finalText, evt.runId);
+        const routerDecision = (evt.message as { routerDecision?: RouterDecision } | null)
+          ?.routerDecision;
+        if (routerDecision) {
+          chatLog.addSystem(formatRouterDecisionSummary(routerDecision));
+        }
       }
       finalizeRun({
         runId: evt.runId,

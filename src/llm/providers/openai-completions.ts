@@ -177,22 +177,12 @@ export const streamOpenAICompletions: StreamFunction<
 
       const responseHeaders = headersToRecord(response.headers);
 
-      // Extract vLLM Semantic Router decision from headers (if present)
       const routerDecision = extractRouterDecision(responseHeaders);
       if (routerDecision) {
         output.routerDecision = routerDecision;
-        // Log router decision for observability (will appear in logs for CLI/TUI/Dashboard)
-        const { formatRouterDecisionSummary } = await import("../vsr-parser.js");
-        const summary = formatRouterDecisionSummary(routerDecision);
-        if (typeof console !== "undefined" && console.info) {
-          console.info(summary);
-        }
       }
 
-      await options?.onResponse?.(
-        { status: response.status, headers: responseHeaders },
-        model,
-      );
+      await options?.onResponse?.({ status: response.status, headers: responseHeaders }, model);
       stream.push({ type: "start", partial: output });
 
       interface StreamingToolCallBlock extends ToolCall {

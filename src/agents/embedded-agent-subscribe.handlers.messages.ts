@@ -1012,6 +1012,11 @@ export function handleMessageEnd(
     ctx.state.lastStreamedAssistantCleaned = cleanedText;
   }
 
+  const routerDecision = (assistantMessage as AssistantMessage).routerDecision;
+  if (routerDecision) {
+    ctx.emitAssistantStreamData({ text: "", delta: "", routerDecision });
+  }
+
   const silentExpectedWithoutSentinel =
     ctx.params.silentExpected && !isSilentReplyText(trimmedText, SILENT_REPLY_TOKEN);
   const finalAssistantText = silentExpectedWithoutSentinel ? "" : text;

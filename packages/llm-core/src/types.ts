@@ -1,8 +1,32 @@
 // LLM Core type module defines shared TypeScript contracts.
 export type { AssistantMessageDiagnostic, DiagnosticErrorInfo } from "./utils/diagnostics.js";
 import type { AssistantMessageDiagnostic } from "./utils/diagnostics.js";
-export type { RouterDecision } from "../../src/llm/vsr-types.js";
-import type { RouterDecision } from "../../src/llm/vsr-types.js";
+
+/** Parsed vLLM Semantic Router decision metadata extracted from x-vsr-* headers. */
+export interface RouterDecision {
+  /** Selected model after routing decision (e.g., "Qwen3.5-9B-NoThinking") */
+  selectedModel?: string;
+  /** Decision rule that matched (e.g., "route_security_guard", "route_cloud_complex") */
+  selectedDecision?: string;
+  /** Confidence score for the decision (0.0-1.0) */
+  selectedConfidence?: number;
+  /** Matched structure signals (e.g., ["short_query", "any_query"]) */
+  matchedStructure?: string[];
+  /** Matched complexity classification (e.g., "needs_reasoning:medium") */
+  matchedComplexity?: string;
+  /** Matched jailbreak detection signal */
+  matchedJailbreak?: string;
+  /** Matched PII detection signal */
+  matchedPii?: string;
+  /** Context token count analyzed by the router */
+  contextTokenCount?: number;
+  /** Looper algorithm used (e.g., "confidence", "static") */
+  looperAlgorithm?: string;
+  /** Number of looper iterations (for confidence looping) */
+  looperIterations?: number;
+  /** Models used during looper execution (e.g., ["Qwen3.5-9B", "Kimi-K2"]) */
+  looperModelsUsed?: string[];
+}
 
 /** Provider API families with first-class request/stream adapters in OpenClaw. */
 export type KnownApi =

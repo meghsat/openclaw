@@ -1,6 +1,7 @@
 // Gateway chat run state registries.
 // Tracks active runs, delta buffers, tool recipients, and session subscribers.
 import type { AgentEventPayload } from "../infra/agent-events.js";
+import type { RouterDecision } from "../llm/vsr-types.js";
 
 export type ChatRunTiming = {
   ackedAtMs: number;
@@ -97,6 +98,8 @@ export type ChatRunState = {
   agentDeltaSentAt: Map<string, number>;
   bufferedAgentEvents: Map<string, BufferedAgentEvent>;
   abortedRuns: Map<string, number>;
+  /** vLLM Semantic Router decision keyed by clientRunId, cleared on run end. */
+  routerDecisions: Map<string, RouterDecision>;
   clearRun: (runId: string) => void;
   clear: () => void;
 };
@@ -113,6 +116,7 @@ export function createChatRunState(): ChatRunState {
   const agentDeltaSentAt = new Map<string, number>();
   const bufferedAgentEvents = new Map<string, BufferedAgentEvent>();
   const abortedRuns = new Map<string, number>();
+  const routerDecisions = new Map<string, RouterDecision>();
 
   const clearRun = (runId: string) => {
     rawBuffers.delete(runId);
@@ -121,6 +125,7 @@ export function createChatRunState(): ChatRunState {
     deltaSentAt.delete(runId);
     deltaLastBroadcastLen.delete(runId);
     deltaLastBroadcastText.delete(runId);
+    routerDecisions.delete(runId);
     for (const key of [runId, `${runId}:assistant`, `${runId}:thinking`]) {
       agentDeltaSentAt.delete(key);
       bufferedAgentEvents.delete(key);
@@ -138,6 +143,7 @@ export function createChatRunState(): ChatRunState {
     agentDeltaSentAt.clear();
     bufferedAgentEvents.clear();
     abortedRuns.clear();
+    routerDecisions.clear();
   };
 
   return {
@@ -151,6 +157,7 @@ export function createChatRunState(): ChatRunState {
     agentDeltaSentAt,
     bufferedAgentEvents,
     abortedRuns,
+    routerDecisions,
     clearRun,
     clear,
   };

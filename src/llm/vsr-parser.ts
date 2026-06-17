@@ -1,31 +1,26 @@
-/**
- * vLLM Semantic Router decision header parser and formatter.
- *
- * Extracts routing decisions from `x-vsr-*` HTTP response headers and formats
- * them for display in OpenClaw's TUI, Dashboard, and CLI.
- */
+// vLLM Semantic Router decision header parser and formatter.
+import type { RouterDecision } from "./vsr-types.js";
 
-import type { RouterDecision, RouterHeaders } from "./vsr-types.js";
+type RouterHeaders = {
+  "x-vsr-selected-model"?: string;
+  "x-vsr-selected-decision"?: string;
+  "x-vsr-selected-confidence"?: string;
+  "x-vsr-matched-structure"?: string;
+  "x-vsr-matched-complexity"?: string;
+  "x-vsr-matched-jailbreak"?: string;
+  "x-vsr-matched-pii"?: string;
+  "x-vsr-context-token-count"?: string;
+  "x-vsr-looper-algorithm"?: string;
+  "x-vsr-looper-iterations"?: string;
+  "x-vsr-looper-models-used"?: string;
+};
 
 const VSR_PREFIX = "x-vsr-";
 
-/**
- * Extract vLLM Semantic Router decision from HTTP response headers.
- *
- * Scans for `x-vsr-*` headers (case-insensitive) and parses them into a
- * structured RouterDecision object. Returns undefined if no router headers
- * are present (i.e., the response came from a regular OpenAI endpoint, not
- * the vLLM Semantic Router proxy).
- *
- * @param headers - HTTP response headers as a key-value record
- * @returns Parsed router decision or undefined if no router headers found
- */
-export function extractRouterDecision(
-  headers: Record<string, string>,
-): RouterDecision | undefined {
+/** Extract vLLM Semantic Router decision from HTTP response headers, or undefined if none. */
+export function extractRouterDecision(headers: Record<string, string>): RouterDecision | undefined {
   const vsrHeaders: Partial<RouterHeaders> = {};
 
-  // Extract all x-vsr-* headers (case-insensitive)
   for (const [key, value] of Object.entries(headers)) {
     const lowerKey = key.toLowerCase();
     if (lowerKey.startsWith(VSR_PREFIX)) {
@@ -33,13 +28,11 @@ export function extractRouterDecision(
     }
   }
 
-  // If no router headers found, return undefined
   if (Object.keys(vsrHeaders).length === 0) {
     return undefined;
   }
 
-  // Parse structured decision object
-  const decision: RouterDecision = {
+  return {
     selectedModel: vsrHeaders["x-vsr-selected-model"],
     selectedDecision: vsrHeaders["x-vsr-selected-decision"],
     selectedConfidence: parseFloatSafe(vsrHeaders["x-vsr-selected-confidence"]),
@@ -52,27 +45,15 @@ export function extractRouterDecision(
     looperIterations: parseIntSafe(vsrHeaders["x-vsr-looper-iterations"]),
     looperModelsUsed: parseCommaSeparated(vsrHeaders["x-vsr-looper-models-used"]),
   };
-
-  return decision;
 }
 
-/**
- * Format router decision as a compact one-line summary for display.
- *
- * Produces output similar to Hermes format:
- * "🧭 router → Qwen3.5-9B | decision=route_security_guard (conf 1.00) | structure=short_query,any_query | algo=static iters=1"
- *
- * @param decision - Parsed router decision
- * @returns Formatted summary string
- */
+/** Format router decision as a compact summary line for TUI/CLI display. */
 export function formatRouterDecisionSummary(decision: RouterDecision): string {
   const parts: string[] = [];
 
-  // Model selection (always present)
   const model = decision.selectedModel || "?";
   parts.push(`🧭 router → ${model}`);
 
-  // Decision name + confidence
   if (decision.selectedDecision) {
     let seg = `decision=${decision.selectedDecision}`;
     if (decision.selectedConfidence !== undefined) {
@@ -81,7 +62,6 @@ export function formatRouterDecisionSummary(decision: RouterDecision): string {
     parts.push(seg);
   }
 
-  // Matched signals
   const signals: string[] = [];
   if (decision.matchedStructure && decision.matchedStructure.length > 0) {
     signals.push(`structure=${decision.matchedStructure.join(",")}`);
@@ -102,7 +82,6 @@ export function formatRouterDecisionSummary(decision: RouterDecision): string {
     parts.push(signals.join(" "));
   }
 
-  // Looper metadata (for confidence looping)
   const loop: string[] = [];
   if (decision.looperAlgorithm) {
     loop.push(`algo=${decision.looperAlgorithm}`);
@@ -123,27 +102,18 @@ export function formatRouterDecisionSummary(decision: RouterDecision): string {
   return parts.join(" | ");
 }
 
-/**
- * Parse a string to float, returning undefined if invalid.
- */
 function parseFloatSafe(value: string | undefined): number | undefined {
   if (!value) return undefined;
   const num = parseFloat(value);
   return isNaN(num) ? undefined : num;
 }
 
-/**
- * Parse a string to integer, returning undefined if invalid.
- */
 function parseIntSafe(value: string | undefined): number | undefined {
   if (!value) return undefined;
   const num = parseInt(value, 10);
   return isNaN(num) ? undefined : num;
 }
 
-/**
- * Parse a comma-separated string into an array, returning undefined if empty.
- */
 function parseCommaSeparated(value: string | undefined): string[] | undefined {
   if (!value) return undefined;
   const items = value

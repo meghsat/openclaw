@@ -28,7 +28,10 @@ import { convertMessages } from "../llm/providers/openai-completions.js";
 import { clampOpenAIPromptCacheKey } from "../llm/providers/openai-prompt-cache.js";
 import type { Api, Context, Model } from "../llm/types.js";
 import { createAssistantMessageEventStream } from "../llm/utils/event-stream.js";
+import { headersToRecord } from "../llm/utils/headers.js";
 import { parseStreamingJson } from "../llm/utils/json-parse.js";
+import { extractRouterDecision } from "../llm/vsr-parser.js";
+import type { RouterDecision } from "../llm/vsr-types.js";
 import { redactIdentifier } from "../logging/redact-identifier.js";
 import { redactSensitiveText } from "../logging/redact.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
@@ -243,6 +246,7 @@ type MutableAssistantOutput = {
   errorCode?: string;
   errorType?: string;
   errorBody?: string;
+  routerDecision?: RouterDecision;
 };
 
 export { sanitizeTransportPayloadText } from "./transport-stream-shared.js";
@@ -2671,10 +2675,21 @@ export function createOpenAICompletionsTransportStreamFn(): StreamFn {
           model as OpenAIModeModel,
           options as OpenAICompletionsOptions | undefined,
         );
-        const responseStream = (await client.chat.completions.create(
-          params as never,
-          buildOpenAISdkRequestOptions(model, options?.signal),
-        )) as unknown as AsyncIterable<ChatCompletionChunk>;
+        const { data: responseStream, response: httpResponse } = await (
+          client.chat.completions.create(
+            params as never,
+            buildOpenAISdkRequestOptions(model, options?.signal),
+          ) as unknown as {
+            withResponse(): Promise<{
+              data: AsyncIterable<ChatCompletionChunk>;
+              response: Response;
+            }>;
+          }
+        ).withResponse();
+        const routerDecision = extractRouterDecision(headersToRecord(httpResponse.headers));
+        if (routerDecision) {
+          output.routerDecision = routerDecision;
+        }
         stream.push({ type: "start", partial: output as never });
         await processOpenAICompletionsStream(responseStream, output, model, stream, {
           signal: options?.signal,

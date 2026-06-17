@@ -9,6 +9,7 @@ import { getRuntimeConfig } from "../config/io.js";
 import { type AgentEventPayload, getAgentRunContext } from "../infra/agent-events.js";
 import { detectErrorKind, type ErrorKind } from "../infra/errors.js";
 import { resolveHeartbeatVisibility } from "../infra/heartbeat-visibility.js";
+import type { RouterDecision } from "../llm/vsr-types.js";
 import { isAcpSessionKey, isSubagentSessionKey } from "../sessions/session-key-utils.js";
 import { resolveAssistantEventPhase } from "../shared/chat-message-content.js";
 import { setSafeTimeout } from "../utils/timer-delay.js";
@@ -922,6 +923,8 @@ export function createAgentEventHandler({
     // suppressed the most recent chunk, leaving the client with stale text.
     // Only flush if the buffered text differs from the last broadcast to avoid duplicates.
     flushBufferedChatDeltaIfNeeded(sessionKey, opts?.agentId, clientRunId, sourceRunId, seq, opts);
+    // Read routerDecision before clearRun deletes it.
+    const routerDecision = chatRunState.routerDecisions.get(clientRunId);
     chatRunState.clearRun(clientRunId);
     const spawnedBy = resolveSpawnedBy(sessionKey);
     if (jobState === "done") {
@@ -939,6 +942,7 @@ export function createAgentEventHandler({
                 role: "assistant",
                 content: [{ type: "text", text }],
                 timestamp: Date.now(),
+                ...(routerDecision && { routerDecision }),
               }
             : undefined,
       };
@@ -1389,6 +1393,9 @@ export function createAgentEventHandler({
             controlUiVisible: isControlUiVisible,
           },
         );
+      }
+      if (evt.stream === "assistant" && evt.data?.routerDecision) {
+        chatRunState.routerDecisions.set(clientRunId, evt.data.routerDecision as RouterDecision);
       }
     }
 
