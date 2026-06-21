@@ -10,10 +10,16 @@ export interface RouterDecision {
   selectedDecision?: string;
   /** Confidence score for the decision (0.0-1.0) */
   selectedConfidence?: number;
+  /** Reasoning mode selected (e.g., "off", "on") */
+  selectedReasoning?: string;
   /** Matched structure signals (e.g., ["short_query", "any_query"]) */
   matchedStructure?: string[];
   /** Matched complexity classification (e.g., "needs_reasoning:medium") */
   matchedComplexity?: string;
+  /** Matched domain signals (e.g., ["computer_science"]) */
+  matchedDomains?: string[];
+  /** Matched keyword category signals (e.g., ["legal_research_keywords"]) */
+  matchedKeywords?: string[];
   /** Matched jailbreak detection signal */
   matchedJailbreak?: string;
   /** Matched PII detection signal */

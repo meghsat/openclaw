@@ -5,8 +5,11 @@ type RouterHeaders = {
   "x-vsr-selected-model"?: string;
   "x-vsr-selected-decision"?: string;
   "x-vsr-selected-confidence"?: string;
+  "x-vsr-selected-reasoning"?: string;
   "x-vsr-matched-structure"?: string;
   "x-vsr-matched-complexity"?: string;
+  "x-vsr-matched-domains"?: string;
+  "x-vsr-matched-keywords"?: string;
   "x-vsr-matched-jailbreak"?: string;
   "x-vsr-matched-pii"?: string;
   "x-vsr-context-token-count"?: string;
@@ -36,8 +39,11 @@ export function extractRouterDecision(headers: Record<string, string>): RouterDe
     selectedModel: vsrHeaders["x-vsr-selected-model"],
     selectedDecision: vsrHeaders["x-vsr-selected-decision"],
     selectedConfidence: parseFloatSafe(vsrHeaders["x-vsr-selected-confidence"]),
+    selectedReasoning: vsrHeaders["x-vsr-selected-reasoning"],
     matchedStructure: parseCommaSeparated(vsrHeaders["x-vsr-matched-structure"]),
     matchedComplexity: vsrHeaders["x-vsr-matched-complexity"],
+    matchedDomains: parseCommaSeparated(vsrHeaders["x-vsr-matched-domains"]),
+    matchedKeywords: parseCommaSeparated(vsrHeaders["x-vsr-matched-keywords"]),
     matchedJailbreak: vsrHeaders["x-vsr-matched-jailbreak"],
     matchedPii: vsrHeaders["x-vsr-matched-pii"],
     contextTokenCount: parseIntSafe(vsrHeaders["x-vsr-context-token-count"]),
@@ -62,41 +68,41 @@ export function formatRouterDecisionSummary(decision: RouterDecision): string {
     parts.push(seg);
   }
 
-  const signals: string[] = [];
   if (decision.matchedStructure && decision.matchedStructure.length > 0) {
-    signals.push(`structure=${decision.matchedStructure.join(",")}`);
+    parts.push(`structure=${decision.matchedStructure.join(",")}`);
   }
   if (decision.matchedComplexity) {
-    signals.push(`complexity=${decision.matchedComplexity}`);
+    parts.push(`complexity=${decision.matchedComplexity}`);
+  }
+  if (decision.matchedDomains && decision.matchedDomains.length > 0) {
+    parts.push(`domain=${decision.matchedDomains.join(",")}`);
+  }
+  if (decision.matchedKeywords && decision.matchedKeywords.length > 0) {
+    parts.push(`keywords=${decision.matchedKeywords.join(",")}`);
   }
   if (decision.matchedJailbreak) {
-    signals.push(`jailbreak=${decision.matchedJailbreak}`);
+    parts.push(`jailbreak=${decision.matchedJailbreak}`);
   }
   if (decision.matchedPii) {
-    signals.push(`pii=${decision.matchedPii}`);
+    parts.push(`pii=${decision.matchedPii}`);
+  }
+  if (decision.selectedReasoning) {
+    parts.push(`reasoning=${decision.selectedReasoning}`);
   }
   if (decision.contextTokenCount !== undefined) {
-    signals.push(`ctx_tokens=${decision.contextTokenCount}`);
+    parts.push(`ctx_tokens=${decision.contextTokenCount}`);
   }
-  if (signals.length > 0) {
-    parts.push(signals.join(" "));
-  }
-
-  const loop: string[] = [];
   if (decision.looperAlgorithm) {
-    loop.push(`algo=${decision.looperAlgorithm}`);
+    parts.push(`algo=${decision.looperAlgorithm}`);
   }
   if (decision.looperIterations !== undefined) {
-    loop.push(`iters=${decision.looperIterations}`);
+    parts.push(`iters=${decision.looperIterations}`);
   }
   if (decision.looperModelsUsed && decision.looperModelsUsed.length > 0) {
     const modelsUsed = decision.looperModelsUsed.join(",");
     if (modelsUsed !== model) {
-      loop.push(`models=${modelsUsed}`);
+      parts.push(`models=${modelsUsed}`);
     }
-  }
-  if (loop.length > 0) {
-    parts.push(loop.join(" "));
   }
 
   return parts.join(" | ");
